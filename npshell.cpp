@@ -10,16 +10,57 @@
 
 using namespace std;
 
-vector<string> parseCommand(const string& command) {
-    vector<string> cmdList;
+// Use number pipe to classify cmd
+vector<string> splitCommand(const string& command) {
+    // Split the command by ' ' (space)
+    vector<string> cmdSplitList;
     string token;
     stringstream ss(command);
     while (ss >> token) {
-        cmdList.push_back(token);
+        cmdSplitList.push_back(token);
     }
     ss.clear();
     ss.str("");
+
+    // Combine cmdSplitList into a command
+    vector<string> cmdList;
+    int splitIndex = 0;
+    for (int i = 0; i < cmdSplitList.size(); i++) {
+        if ((cmdSplitList[i][0] == '|' || cmdSplitList[i][0] == '!') && cmdSplitList[i].size() > 1) {
+            string tmp = "";
+            while (splitIndex < cmdSplitList.size() - 1) {
+                tmp += cmdSplitList[splitIndex] + " ";
+                splitIndex++;
+            }
+            tmp += cmdSplitList[splitIndex];
+            cmdList.push_back(tmp);
+            splitIndex++;
+        }
+    }
+    if (splitIndex < cmdSplitList.size()) {
+        string tmp = "";
+        while (splitIndex < cmdSplitList.size() - 1) {
+            tmp += cmdSplitList[splitIndex] + " ";
+            splitIndex++;
+        }
+        tmp += cmdSplitList[splitIndex];
+        cmdList.push_back(tmp);
+    }
+
     return cmdList;
+}
+
+vector<string> parseCommand(const string& command) {
+    vector<string> cmd;
+    string token;
+    stringstream ss(command);
+    while (ss >> token) {
+        cmd.push_back(token);
+    }
+    ss.clear();
+    ss.str("");
+    
+    return cmd;
 }
 
 void build_in_command(const string& command) {
@@ -39,9 +80,11 @@ void build_in_command(const string& command) {
 }
 
 // Function to execute a command
-void executeCommand(const string& command) {
+void executeCommand(const vector<string>& commands) {
     // TODO: Implement command execution logic here
-    build_in_command(command);
+    for (int i = 0; i < commands.size(); i++) {
+        build_in_command(commands[i]);
+    }
 }
 
 // Function to handle ordinary pipe
@@ -69,7 +112,11 @@ int main() {
         cout << "% "; // Use "% " as the command line prompt.
         getline(cin, input);
 
-        executeCommand(input);
+        commands = splitCommand(input);
+        // for (int i = 0; i < commands.size(); i++) {
+        //     cout << commands[i] << endl;
+        // }
+        executeCommand(commands);
     }
 
     return 0;
