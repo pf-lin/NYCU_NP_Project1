@@ -51,3 +51,5 @@ Thumbs.db
 # VSCode
 .vscode/
 
+# npshell
+npshell

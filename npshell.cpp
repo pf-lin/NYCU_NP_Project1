@@ -10,8 +10,30 @@
 
 using namespace std;
 
+struct NumberedPipe {
+    int pipeNumber;
+    int pipefd[2];
+};
+
+struct CommandInfo {
+    vector<string> cmdList;
+    int cmdId;
+};
+
+struct Process {
+    vector<string> args;
+    bool isOrdinaryPipe = false;
+    bool isNumberedPipe = false;
+    bool isErrPipe = false;
+    int pipeNumber;
+};
+
+int cmdCount = 0;
+
 // Use number pipe to classify cmd
-vector<string> splitCommand(const string& command) {
+vector<CommandInfo> splitCommand(const string& command) {
+    // HINT: return type of command will be easier -- by newb1er
+
     // Split the command by ' ' (space)
     vector<string> cmdSplitList;
     string token;
@@ -23,67 +45,130 @@ vector<string> splitCommand(const string& command) {
     ss.str("");
 
     // Combine cmdSplitList into a command
-    vector<string> cmdList;
+    vector<CommandInfo> cmdInfoList;
     int splitIndex = 0;
     for (int i = 0; i < cmdSplitList.size(); i++) {
         if ((cmdSplitList[i][0] == '|' || cmdSplitList[i][0] == '!') && cmdSplitList[i].size() > 1) {
-            string tmp = "";
-            while (splitIndex < cmdSplitList.size() - 1) {
-                tmp += cmdSplitList[splitIndex] + " ";
+            CommandInfo cmdInfo;
+            cmdInfo.cmdId = cmdCount++;
+            while (splitIndex <= i) {
+                cmdInfo.cmdList.push_back(cmdSplitList[splitIndex]);
                 splitIndex++;
             }
-            tmp += cmdSplitList[splitIndex];
-            cmdList.push_back(tmp);
-            splitIndex++;
+            cmdInfoList.push_back(cmdInfo);
         }
     }
     if (splitIndex < cmdSplitList.size()) {
-        string tmp = "";
-        while (splitIndex < cmdSplitList.size() - 1) {
-            tmp += cmdSplitList[splitIndex] + " ";
+        CommandInfo cmdInfo;
+        cmdInfo.cmdId = cmdCount++;
+        while (splitIndex < cmdSplitList.size()) {
+            cmdInfo.cmdList.push_back(cmdSplitList[splitIndex]);
             splitIndex++;
         }
-        tmp += cmdSplitList[splitIndex];
-        cmdList.push_back(tmp);
+        cmdInfoList.push_back(cmdInfo);
     }
 
-    return cmdList;
+    return cmdInfoList;
 }
 
-vector<string> parseCommand(const string& command) {
-    vector<string> cmd;
-    string token;
-    stringstream ss(command);
-    while (ss >> token) {
-        cmd.push_back(token);
+vector<Process> parseCommand(const CommandInfo& cmdInfo) {
+    vector<Process> processList;
+    int cmdListIndex = 0;
+    for (int i = 0; i < cmdInfo.cmdList.size(); i++) {
+        if ((cmdInfo.cmdList[i][0] == '|' || cmdInfo.cmdList[i][0] == '!') && cmdInfo.cmdList[i].size() > 1) {
+            Process process;
+            if (cmdInfo.cmdList[i][0] == '|') // numbered pipe
+                process.isNumberedPipe = true;
+            else // error pipe
+                process.isErrPipe = true;
+
+            process.pipeNumber = stoi(cmdInfo.cmdList[i].substr(1));
+            while (cmdListIndex < i) {
+                process.args.push_back(cmdInfo.cmdList[cmdListIndex]);
+                cmdListIndex++;
+            }
+            processList.push_back(process);
+        }
+        else if (cmdInfo.cmdList[i][0] == '|' && cmdInfo.cmdList[i].size() == 1) { // ordinary pipe
+            Process process;
+            process.isOrdinaryPipe = true;
+            while (cmdListIndex < i) {
+                process.args.push_back(cmdInfo.cmdList[cmdListIndex]);
+                cmdListIndex++;
+            }
+            processList.push_back(process);
+        }
     }
-    ss.clear();
-    ss.str("");
-    
-    return cmd;
+    if (cmdListIndex < cmdInfo.cmdList.size()) {
+        Process process;
+        while (cmdListIndex < cmdInfo.cmdList.size()) {
+            process.args.push_back(cmdInfo.cmdList[cmdListIndex]);
+            cmdListIndex++;
+        }
+        processList.push_back(process);
+    }
+    return processList;
 }
 
-void build_in_command(const string& command) {
-    vector<string> cmd = parseCommand(command);
-    if (cmd[0] == "setenv") {
-        setenv(cmd[1].c_str(), cmd[2].c_str(), 1);
+bool build_in_command(const CommandInfo& cmdInfo) {
+    if (cmdInfo.cmdList[0] == "setenv") {
+        // TODO: input validation (not in spec but better to have it) -- by newb1er
+        if (cmdInfo.cmdList.size() != 3) {
+            cerr << "Invalid number of arguments for setenv command." << endl;
+            return false;
+        }
+        setenv(cmdInfo.cmdList[1].c_str(), cmdInfo.cmdList[2].c_str(), 1);
     }
-    else if (cmd[0] == "printenv") {
-        const char* env = getenv(cmd[1].c_str());
+    else if (cmdInfo.cmdList[0] == "printenv") {
+        // TODO: input validation (not in spec but better to have it) -- by newb1er
+        if (cmdInfo.cmdList.size() != 2) {
+            cerr << "Invalid number of arguments for printenv command." << endl;
+            return false;
+        }
+        const char* env = getenv(cmdInfo.cmdList[1].c_str());
         if (env != NULL) {
             cout << env << endl;
         }
     }
-    else if (cmd[0] == "exit") {
+    else if (cmdInfo.cmdList[0] == "exit") {
+        exit(0);
+    }
+    else {
+        return false;
+    }
+    return true;
+}
+
+void execute(const Process& process) {
+    char* argv[process.args.size() + 1];
+    for (int i = 0; i < process.args.size(); i++) {
+        argv[i] = (char*)process.args[i].c_str();
+    }
+    argv[process.args.size()] = NULL;
+
+    if (execvp(argv[0], argv) == -1) {
+        cerr << "Unknown command: [" << argv[0] << "]." << endl;
         exit(0);
     }
 }
 
 // Function to execute a command
-void executeCommand(const vector<string>& commands) {
+void executeCommand(const vector<CommandInfo>& commands) {
     // TODO: Implement command execution logic here
+    pid_t pid;
     for (int i = 0; i < commands.size(); i++) {
-        build_in_command(commands[i]);
+        if (build_in_command(commands[i])) {
+            continue;
+        }
+        vector<Process> processList = parseCommand(commands[i]);
+
+        pid = fork();
+        if (pid == 0) { // child process
+            execute(processList[0]);
+        }
+        else {
+            waitpid(pid, NULL, 0);
+        }
     }
 }
 
@@ -104,7 +189,7 @@ void handleFileRedirection(const string& command, const string& fileName, bool a
 
 int main() {
     string input;
-    vector<string> commands;
+    vector<CommandInfo> commands;
 
     setenv("PATH", "bin:.", 1); // initial PATH is bin/ and ./
 
@@ -114,7 +199,10 @@ int main() {
 
         commands = splitCommand(input);
         // for (int i = 0; i < commands.size(); i++) {
-        //     cout << commands[i] << endl;
+        //     for (int j = 0; j < commands[i].cmdList.size(); j++) {
+        //         cout << commands[i].cmdList[j] << " ";
+        //     }
+        //     cout << endl;
         // }
         executeCommand(commands);
     }
