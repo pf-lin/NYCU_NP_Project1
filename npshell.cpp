@@ -12,7 +12,7 @@ using namespace std;
 
 struct NumberedPipe {
     int pipeNumber;
-    int pipefd[2];
+    int numPipefd[2];
 };
 
 struct CommandInfo {
@@ -26,14 +26,15 @@ struct Process {
     bool isNumberedPipe = false;
     bool isErrPipe = false;
     int pipeNumber;
+    int *to = nullptr;
+    int *from = nullptr;
 };
 
-int cmdCount = 0;
+int cmdCount = 0; // count the number of commands
+vector<NumberedPipe> numPipeList; // store numbered pipe
 
 // Use number pipe to classify cmd
 vector<CommandInfo> splitCommand(const string& command) {
-    // HINT: return type of command will be easier -- by newb1er
-
     // Split the command by ' ' (space)
     vector<string> cmdSplitList;
     string token;
@@ -87,6 +88,7 @@ vector<Process> parseCommand(const CommandInfo& cmdInfo) {
                 process.args.push_back(cmdInfo.cmdList[cmdListIndex]);
                 cmdListIndex++;
             }
+            cmdListIndex++;
             processList.push_back(process);
         }
         else if (cmdInfo.cmdList[i][0] == '|' && cmdInfo.cmdList[i].size() == 1) { // ordinary pipe
@@ -96,6 +98,7 @@ vector<Process> parseCommand(const CommandInfo& cmdInfo) {
                 process.args.push_back(cmdInfo.cmdList[cmdListIndex]);
                 cmdListIndex++;
             }
+            cmdListIndex++;
             processList.push_back(process);
         }
     }
@@ -156,35 +159,48 @@ void execute(const Process& process) {
 void executeCommand(const vector<CommandInfo>& commands) {
     // TODO: Implement command execution logic here
     pid_t pid;
-    for (int i = 0; i < commands.size(); i++) {
+    for (int i = 0; i < commands.size(); i++) { // for each command
         if (build_in_command(commands[i])) {
             continue;
         }
         vector<Process> processList = parseCommand(commands[i]);
-
-        pid = fork();
-        if (pid == 0) { // child process
-            execute(processList[0]);
-        }
-        else {
-            waitpid(pid, NULL, 0);
+        int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
+        for (int j = 0; j < processList.size(); j++) { // for each process
+            // if (j == 0 && /* There is a number pipe to write to*/) {
+            //     processList[j].from = numPipeList[/*要知道是numPipeList中的哪一個*/].numPipefd;
+            // }
+            if (j > 0) {
+                processList[j].from = pipefd[(j - 1) % 2];
+            }
+            if (j < processList.size() - 1) {
+                processList[j].to = pipefd[j % 2];
+                pipe(pipefd[j % 2]);
+            }
+            pid = fork();
+            if (pid == 0) { // child process
+                if (processList[j].to != nullptr) {
+                    close(processList[j].to[0]);
+                    dup2(processList[j].to[1], STDOUT_FILENO);
+                    close(processList[j].to[1]);
+                }
+                if (processList[j].from != nullptr) {
+                    close(processList[j].from[1]);
+                    dup2(processList[j].from[0], STDIN_FILENO);
+                    close(processList[j].from[0]);
+                }
+                execute(processList[j]);
+            }
+            else { // parent process
+                if (j > 0) {
+                    close(pipefd[(j - 1) % 2][0]);
+                    close(pipefd[(j - 1) % 2][1]);
+                }
+                if (j == processList.size() - 1) {
+                    waitpid(pid, NULL, 0);
+                }
+            }
         }
     }
-}
-
-// Function to handle ordinary pipe
-void handleOrdinaryPipe(const string& command1, const string& command2) {
-    // TODO: Implement ordinary pipe logic here
-}
-
-// Function to handle numbered pipe
-void handleNumberedPipe(const string& command, int pipeNumber) {
-    // TODO: Implement numbered pipe logic here
-}
-
-// Function to handle file redirection
-void handleFileRedirection(const string& command, const string& fileName, bool append) {
-    // TODO: Implement file redirection logic here
 }
 
 int main() {
