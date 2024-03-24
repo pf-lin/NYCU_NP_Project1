@@ -11,7 +11,7 @@
 using namespace std;
 
 struct NumberedPipe {
-    int pipeNumber;
+    int pipeCmdId; // the command id that the numbered pipe is connected to
     int numPipefd[2];
 };
 
@@ -72,6 +72,7 @@ vector<CommandInfo> splitCommand(const string& command) {
     return cmdInfoList;
 }
 
+// Parse command into each process (fork and execvp)
 vector<Process> parseCommand(const CommandInfo& cmdInfo) {
     vector<Process> processList;
     int cmdListIndex = 0;
@@ -155,20 +156,36 @@ void execute(const Process& process) {
     }
 }
 
-// Function to execute a command
+// Function to execute each command
 void executeCommand(const vector<CommandInfo>& commands) {
-    // TODO: Implement command execution logic here
     pid_t pid;
     for (int i = 0; i < commands.size(); i++) { // for each command
         if (build_in_command(commands[i])) {
             continue;
         }
         vector<Process> processList = parseCommand(commands[i]);
+        // Find if there is a number pipe to pass to this command
+        bool isNumPipeInput = false;
+        int numPipeIndex;
+        for (int np = 0; np < numPipeList.size(); np++) {
+            if (numPipeList[np].pipeCmdId == commands[i].cmdId) {
+                isNumPipeInput = true;
+                numPipeIndex = np;
+                break;
+            }
+        }
         int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
         for (int j = 0; j < processList.size(); j++) { // for each process
-            // if (j == 0 && /* There is a number pipe to write to*/) {
-            //     processList[j].from = numPipeList[/*要知道是numPipeList中的哪一個*/].numPipefd;
-            // }
+            if (j == 0 && isNumPipeInput/* There is a number pipe to write to*/) {
+                processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
+            }
+            if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
+                NumberedPipe numPipe;
+                numPipe.pipeCmdId = commands[i].cmdId + processList[j].pipeNumber;
+                pipe(numPipe.numPipefd);
+                numPipeList.push_back(numPipe);
+                processList[j].to = numPipeList[numPipeList.size() - 1].numPipefd;
+            }
             if (j > 0) {
                 processList[j].from = pipefd[(j - 1) % 2];
             }
@@ -191,7 +208,11 @@ void executeCommand(const vector<CommandInfo>& commands) {
                 execute(processList[j]);
             }
             else { // parent process
-                if (j > 0) {
+                if (j == 0 && isNumPipeInput) { // close number pipe
+                    close(numPipeList[numPipeIndex].numPipefd[0]);
+                    close(numPipeList[numPipeIndex].numPipefd[1]);
+                }
+                if (j > 0) { // close pipe
                     close(pipefd[(j - 1) % 2][0]);
                     close(pipefd[(j - 1) % 2][1]);
                 }
@@ -214,12 +235,6 @@ int main() {
         getline(cin, input);
 
         commands = splitCommand(input);
-        // for (int i = 0; i < commands.size(); i++) {
-        //     for (int j = 0; j < commands[i].cmdList.size(); j++) {
-        //         cout << commands[i].cmdList[j] << " ";
-        //     }
-        //     cout << endl;
-        // }
         executeCommand(commands);
     }
 
