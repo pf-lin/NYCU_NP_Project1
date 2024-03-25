@@ -31,7 +31,7 @@ struct Process {
 };
 
 int cmdCount = 0; // count the number of commands
-vector<NumberedPipe> numPipeList; // store numbered pipe
+vector<NumberedPipe> numPipeList = {}; // store numbered pipe
 
 // Use number pipe to classify cmd
 vector<CommandInfo> splitCommand(const string& command) {
@@ -186,9 +186,6 @@ void executeCommand(const vector<CommandInfo>& commands) {
 
         int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
         for (int j = 0; j < processList.size(); j++) { // for each process
-            if (j == 0 && isNumPipeInput/* There is a number pipe to write to*/) {
-                processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
-            }
             if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
                 int numPipeCmdId = commands[i].cmdId + processList[j].pipeNumber;
 
@@ -209,6 +206,9 @@ void executeCommand(const vector<CommandInfo>& commands) {
                     processList[j].to = numPipeList[numPipeList.size() - 1].numPipefd;
                 }
             }
+            if (j == 0 && isNumPipeInput/* There is a number pipe to write to*/) {
+                processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
+            }
             if (j > 0) {
                 processList[j].from = pipefd[(j - 1) % 2];
             }
@@ -219,20 +219,21 @@ void executeCommand(const vector<CommandInfo>& commands) {
 
             pid = fork();
             if (pid == 0) { // child process
-                if (processList[j].to != nullptr) {
-                    close(processList[j].to[0]);
-                    dup2(processList[j].to[1], STDOUT_FILENO);
-                    if (processList[j].isErrPipe) {
-                        dup2(processList[j].to[1], STDERR_FILENO);
+                auto process = processList.at(j); // by newb1er
+                if (process.to != nullptr) {
+                    close(process.to[0]);
+                    dup2(process.to[1], STDOUT_FILENO);
+                    if (process.isErrPipe) {
+                        dup2(process.to[1], STDERR_FILENO);
                     }
-                    close(processList[j].to[1]);
+                    close(process.to[1]);
                 }
-                if (processList[j].from != nullptr) {
-                    close(processList[j].from[1]);
-                    dup2(processList[j].from[0], STDIN_FILENO);
-                    close(processList[j].from[0]);
+                if (process.from != nullptr) {
+                    close(process.from[1]);
+                    dup2(process.from[0], STDIN_FILENO);
+                    close(process.from[0]);
                 }
-                execute(processList[j]);
+                execute(process);
             }
             else { // parent process
                 if (j == 0 && isNumPipeInput) { // close number pipe
@@ -243,10 +244,10 @@ void executeCommand(const vector<CommandInfo>& commands) {
                     close(pipefd[(j - 1) % 2][0]);
                     close(pipefd[(j - 1) % 2][1]);
                 }
-                if (j == processList.size() - 1) {
-                    waitpid(pid, NULL, 0);
-                }
             }
+        }
+        if (!processList.back().isNumberedPipe) {
+            waitpid(pid, NULL, 0);
         }
     }
 }
@@ -263,6 +264,8 @@ int main() {
 
         commands = splitCommand(input);
         executeCommand(commands);
+
+        // while(waitpid(-1, NULL, WNOHANG) > 0); // wait for all child processes to finish (non-blocking waitpid())
     }
 
     return 0;
