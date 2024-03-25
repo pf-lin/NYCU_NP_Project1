@@ -1,5 +1,5 @@
 all:
-	g++ -o npshell -Wall -g -fsanitize=address -static-libasan npshell.cpp
+	g++ -o npshell npshell.cpp
 	mkdir -p bin
 	cp /bin/ls /bin/cat bin/
 	make -C commands
