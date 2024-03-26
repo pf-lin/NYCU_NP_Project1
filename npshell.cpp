@@ -184,7 +184,7 @@ void executeCommand(const vector<CommandInfo>& commands) {
             }
         }
 
-        int pipefd[100][2]; // pipefd[0] for odd process, pipefd[1] for even process
+        int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
         for (int j = 0; j < processList.size(); j++) { // for each process
             if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
                 int numPipeCmdId = commands[i].cmdId + processList[j].pipeNumber;
@@ -210,14 +210,17 @@ void executeCommand(const vector<CommandInfo>& commands) {
                 processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
             }
             if (j > 0) {
-                processList[j].from = pipefd[(j - 1) % 100];
+                processList[j].from = pipefd[(j - 1) % 2];
             }
             if (j < processList.size() - 1) {
-                processList[j].to = pipefd[j % 100];
-                pipe(pipefd[j % 100]);
+                processList[j].to = pipefd[j % 2];
+                pipe(pipefd[j % 2]);
             }
 
-            pid = fork();
+            while ((pid = fork()) == -1) { // if fork() failed, wait for any one child process to finish
+                waitpid(-1, NULL, 0);
+            }
+
             if (pid == 0) { // child process
                 auto process = processList.at(j); // by newb1er
                 if (process.to != nullptr) {
@@ -236,18 +239,19 @@ void executeCommand(const vector<CommandInfo>& commands) {
                 execute(process);
             }
             else { // parent process
-                while(waitpid(-1, NULL, WNOHANG));
+                while (waitpid(-1, NULL, WNOHANG)); // wait for all child processes to finish (non-blocking waitpid())
+
                 if (j == 0 && isNumPipeInput) { // close number pipe
                     close(numPipeList[numPipeIndex].numPipefd[0]);
                     close(numPipeList[numPipeIndex].numPipefd[1]);
                 }
                 if (j > 0) { // close pipe
-                    close(pipefd[(j - 1) % 100][0]);
-                    close(pipefd[(j - 1) % 100][1]);
+                    close(pipefd[(j - 1) % 2][0]);
+                    close(pipefd[(j - 1) % 2][1]);
                 }
             }
         }
-        if (!processList.back().isNumberedPipe) {
+        if (!processList.back().isNumberedPipe) { // if the last process is not a numbered pipe, wait for it to finish
             waitpid(pid, NULL, 0);
         }
     }
@@ -265,8 +269,6 @@ int main() {
 
         commands = splitCommand(input);
         executeCommand(commands);
-
-        // while(waitpid(-1, NULL, WNOHANG) > 0); // wait for all child processes to finish (non-blocking waitpid())
     }
 
     return 0;
