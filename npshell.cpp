@@ -184,7 +184,7 @@ void executeCommand(const vector<CommandInfo>& commands) {
             }
         }
 
-        int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
+        int pipefd[100][2]; // pipefd[0] for odd process, pipefd[1] for even process
         for (int j = 0; j < processList.size(); j++) { // for each process
             if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
                 int numPipeCmdId = commands[i].cmdId + processList[j].pipeNumber;
@@ -210,11 +210,11 @@ void executeCommand(const vector<CommandInfo>& commands) {
                 processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
             }
             if (j > 0) {
-                processList[j].from = pipefd[(j - 1) % 2];
+                processList[j].from = pipefd[(j - 1) % 100];
             }
             if (j < processList.size() - 1) {
-                processList[j].to = pipefd[j % 2];
-                pipe(pipefd[j % 2]);
+                processList[j].to = pipefd[j % 100];
+                pipe(pipefd[j % 100]);
             }
 
             pid = fork();
@@ -236,13 +236,14 @@ void executeCommand(const vector<CommandInfo>& commands) {
                 execute(process);
             }
             else { // parent process
+                while(waitpid(-1, NULL, WNOHANG));
                 if (j == 0 && isNumPipeInput) { // close number pipe
                     close(numPipeList[numPipeIndex].numPipefd[0]);
                     close(numPipeList[numPipeIndex].numPipefd[1]);
                 }
                 if (j > 0) { // close pipe
-                    close(pipefd[(j - 1) % 2][0]);
-                    close(pipefd[(j - 1) % 2][1]);
+                    close(pipefd[(j - 1) % 100][0]);
+                    close(pipefd[(j - 1) % 100][1]);
                 }
             }
         }
