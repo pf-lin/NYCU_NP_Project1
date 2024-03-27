@@ -246,7 +246,7 @@ void executeProcess(vector<Process>& processList, int cmdId, bool isNumPipeInput
         waitpid(pid, NULL, 0);
     }
     else {
-        usleep(20000);
+        usleep(50000);
     }
 }
 
