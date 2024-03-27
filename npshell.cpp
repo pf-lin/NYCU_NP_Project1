@@ -163,9 +163,95 @@ void execute(const Process& process) {
     }
 }
 
+// Find if there is a number pipe to pass to this command
+int findPipeCmdId(const vector<CommandInfo>& commands, int i) {
+    for (int np = 0; np < numPipeList.size(); np++) {
+        if (numPipeList[np].pipeCmdId == commands[i].cmdId) {
+            return np;
+        }
+    }
+    return -1;
+}
+
+void executeProcess(vector<Process>& processList, int cmdId, bool isNumPipeInput, int numPipeIndex) {
+    pid_t pid;
+    int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
+    for (int j = 0; j < processList.size(); j++) { // for each process
+        if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
+            int numPipeCmdId = cmdId + processList[j].pipeNumber;
+
+            // check if a numbered pipe connected to the same command has been established
+            for (int np = 0; np < numPipeList.size(); np++) {
+                if (numPipeList[np].pipeCmdId == numPipeCmdId) {
+                    processList[j].to = numPipeList[np].numPipefd;
+                    break;
+                }
+            }
+
+            // if not, create a new numbered pipe
+            if (processList[j].to == nullptr) {
+                NumberedPipe numPipe;
+                numPipe.pipeCmdId = numPipeCmdId;
+                pipe(numPipe.numPipefd);
+                numPipeList.push_back(numPipe);
+                processList[j].to = numPipeList[numPipeList.size() - 1].numPipefd;
+            }
+        }
+        if (j == 0 && isNumPipeInput/* There is a number pipe to write to*/) {
+            processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
+        }
+        if (j > 0) {
+            processList[j].from = pipefd[(j - 1) % 2];
+        }
+        if (j < processList.size() - 1) {
+            processList[j].to = pipefd[j % 2];
+            pipe(pipefd[j % 2]);
+        }
+
+        while ((pid = fork()) == -1) { // if fork() failed, wait for any one child process to finish
+            waitpid(-1, NULL, 0);
+        }
+
+        if (pid == 0) { // child process
+            auto process = processList.at(j); // by newb1er
+            if (process.to != nullptr) {
+                close(process.to[0]);
+                dup2(process.to[1], STDOUT_FILENO);
+                if (process.isErrPipe) {
+                    dup2(process.to[1], STDERR_FILENO);
+                }
+                close(process.to[1]);
+            }
+            if (process.from != nullptr) {
+                close(process.from[1]);
+                dup2(process.from[0], STDIN_FILENO);
+                close(process.from[0]);
+            }
+            execute(process);
+        }
+        else { // parent process
+            while (waitpid(-1, NULL, WNOHANG)); // wait for all child processes to finish (non-blocking waitpid())
+
+            if (j == 0 && isNumPipeInput) { // close number pipe
+                close(numPipeList[numPipeIndex].numPipefd[0]);
+                close(numPipeList[numPipeIndex].numPipefd[1]);
+            }
+            if (j > 0) { // close pipe
+                close(pipefd[(j - 1) % 2][0]);
+                close(pipefd[(j - 1) % 2][1]);
+            }
+        }
+    }
+    if (!processList.back().isNumberedPipe) { // if the last process is not a numbered pipe, wait for it to finish
+        waitpid(pid, NULL, 0);
+    }
+    else {
+        usleep(20000);
+    }
+}
+
 // Function to execute each command
 void executeCommand(const vector<CommandInfo>& commands) {
-    pid_t pid;
     for (int i = 0; i < commands.size(); i++) { // for each command
         if (build_in_command(commands[i])) {
             continue;
@@ -173,87 +259,13 @@ void executeCommand(const vector<CommandInfo>& commands) {
         
         vector<Process> processList = parseCommand(commands[i]);
 
-        // Find if there is a number pipe to pass to this command
         bool isNumPipeInput = false;
-        int numPipeIndex;
-        for (int np = 0; np < numPipeList.size(); np++) {
-            if (numPipeList[np].pipeCmdId == commands[i].cmdId) {
-                isNumPipeInput = true;
-                numPipeIndex = np;
-                break;
-            }
+        int numPipeIndex = findPipeCmdId(commands, i);
+        if (numPipeIndex != -1) {
+            isNumPipeInput = true;
         }
 
-        int pipefd[2][2]; // pipefd[0] for odd process, pipefd[1] for even process
-        for (int j = 0; j < processList.size(); j++) { // for each process
-            if (processList[j].isNumberedPipe || processList[j].isErrPipe) { // create numbered pipe
-                int numPipeCmdId = commands[i].cmdId + processList[j].pipeNumber;
-
-                // check if a numbered pipe connected to the same command has been established
-                for (int np = 0; np < numPipeList.size(); np++) {
-                    if (numPipeList[np].pipeCmdId == numPipeCmdId) {
-                        processList[j].to = numPipeList[np].numPipefd;
-                        break;
-                    }
-                }
-
-                // if not, create a new numbered pipe
-                if (processList[j].to == nullptr) {
-                    NumberedPipe numPipe;
-                    numPipe.pipeCmdId = numPipeCmdId;
-                    pipe(numPipe.numPipefd);
-                    numPipeList.push_back(numPipe);
-                    processList[j].to = numPipeList[numPipeList.size() - 1].numPipefd;
-                }
-            }
-            if (j == 0 && isNumPipeInput/* There is a number pipe to write to*/) {
-                processList[j].from = numPipeList[numPipeIndex].numPipefd; // read from number pipe
-            }
-            if (j > 0) {
-                processList[j].from = pipefd[(j - 1) % 2];
-            }
-            if (j < processList.size() - 1) {
-                processList[j].to = pipefd[j % 2];
-                pipe(pipefd[j % 2]);
-            }
-
-            while ((pid = fork()) == -1) { // if fork() failed, wait for any one child process to finish
-                waitpid(-1, NULL, 0);
-            }
-
-            if (pid == 0) { // child process
-                auto process = processList.at(j); // by newb1er
-                if (process.to != nullptr) {
-                    close(process.to[0]);
-                    dup2(process.to[1], STDOUT_FILENO);
-                    if (process.isErrPipe) {
-                        dup2(process.to[1], STDERR_FILENO);
-                    }
-                    close(process.to[1]);
-                }
-                if (process.from != nullptr) {
-                    close(process.from[1]);
-                    dup2(process.from[0], STDIN_FILENO);
-                    close(process.from[0]);
-                }
-                execute(process);
-            }
-            else { // parent process
-                while (waitpid(-1, NULL, WNOHANG)); // wait for all child processes to finish (non-blocking waitpid())
-
-                if (j == 0 && isNumPipeInput) { // close number pipe
-                    close(numPipeList[numPipeIndex].numPipefd[0]);
-                    close(numPipeList[numPipeIndex].numPipefd[1]);
-                }
-                if (j > 0) { // close pipe
-                    close(pipefd[(j - 1) % 2][0]);
-                    close(pipefd[(j - 1) % 2][1]);
-                }
-            }
-        }
-        if (!processList.back().isNumberedPipe) { // if the last process is not a numbered pipe, wait for it to finish
-            waitpid(pid, NULL, 0);
-        }
+        executeProcess(processList, commands[i].cmdId, isNumPipeInput, numPipeIndex);
     }
 }
 
