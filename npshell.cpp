@@ -146,14 +146,21 @@ bool build_in_command(const CommandInfo& cmdInfo) {
 void execute(const Process& process) {
     char* argv[process.args.size() + 1];
     for (int i = 0; i < process.args.size(); i++) {
-        if (process.args[i] == ">") { // file redirection
+        if (process.args[i] == "<") { // Implement "<" -- for demo
+            int fd = open(process.args[i + 1].c_str(), O_RDONLY);
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+            argv[i] = NULL;
+        }
+        else if (process.args[i] == ">") { // file redirection
             int fd = open(process.args[i + 1].c_str(), O_RDWR | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR);
             dup2(fd, STDOUT_FILENO);
             close(fd);
             argv[i] = NULL;
-            break;
         }
-        argv[i] = (char*)process.args[i].c_str();
+        else {
+            argv[i] = (char*)process.args[i].c_str();
+        }
     }
     argv[process.args.size()] = NULL;
 
